@@ -4,7 +4,16 @@ describe('Certificates endpoints', () => {
 	let token;
 	let certID;
 
+	const certFile = 'test.example.com.pem';
+	const keyFile = 'test.example.com-key.pem';
+
 	before(() => {
+		cy.createCustomCerts({
+			domain: 'test.example.com',
+			certFile,
+			keyFile,
+		})
+
 		cy.resetUsers();
 		cy.getToken().then((tok) => {
 			token = tok;
@@ -16,13 +25,70 @@ describe('Certificates endpoints', () => {
 			token: token,
 			path:  '/api/nginx/certificates/validate',
 			files:  {
-				certificate: 'test.example.com.pem',
-				certificate_key: 'test.example.com-key.pem',
+				certificate: certFile,
+				certificate_key: keyFile,
 			},
 		}).then((data) => {
 			cy.validateSwaggerSchema('post', 200, '/nginx/certificates/validate', data);
 			expect(data).to.have.property('certificate');
 			expect(data).to.have.property('certificate_key');
+		});
+	});
+
+	it('Unauthenticated user cannot validate custom certificate', () => {
+		cy.task('backendApiPostFiles', {
+			path:          '/api/nginx/certificates/validate',
+			files:         {
+				certificate:     certFile,
+				certificate_key: keyFile,
+			},
+			returnOnError: true,
+		}).then((data) => {
+			expect(data.error.code).to.equal(403);
+		});
+	});
+
+	it('User with certificates view permission cannot validate custom certificate', () => {
+		const viewer = {
+			email:  'viewer@example.com',
+			secret: 'changeme',
+		};
+
+		cy.task('backendApiPost', {
+			token: token,
+			path:  '/api/users',
+			data:  {
+				name:     'Certificate Viewer',
+				nickname: 'Viewer',
+				email:    viewer.email,
+				roles:    ['user'],
+				auth:     {
+					type:   'password',
+					secret: viewer.secret,
+				},
+			},
+		}).then((user) => {
+			cy.task('backendApiPut', {
+				token: token,
+				path:  `/api/users/${user.id}/permissions`,
+				data:  {
+					certificates: 'view',
+				},
+			});
+
+			cy.getToken(null, {identity: viewer.email, secret: viewer.secret}).then((viewerToken) => {
+				cy.task('backendApiPostFiles', {
+					token:         viewerToken,
+					path:          '/api/nginx/certificates/validate',
+					files:         {
+						certificate:     certFile,
+						certificate_key: keyFile,
+					},
+					returnOnError: true,
+				}).then((data) => {
+					expect(data.error.code).to.equal(403);
+				});
+			});
 		});
 	});
 
@@ -45,8 +111,8 @@ describe('Certificates endpoints', () => {
 				token: token,
 				path:  `/api/nginx/certificates/${certID}/upload`,
 				files:  {
-					certificate: 'test.example.com.pem',
-					certificate_key: 'test.example.com-key.pem',
+					certificate: certFile,
+					certificate_key: keyFile,
 				},
 			}).then((data) => {
 				cy.validateSwaggerSchema('post', 200, '/nginx/certificates/{certID}/upload', data);
@@ -60,6 +126,9 @@ describe('Certificates endpoints', () => {
 				}).then((data) => {
 					cy.validateSwaggerSchema('get', 200, '/nginx/certificates', data);
 					expect(data.length).to.be.greaterThan(0);
+					const cert = data.find((c) => c.id === certID);
+					expect(cert.meta).to.have.property('certificate');
+					expect(cert.meta).to.not.have.property('certificate_key');
 
 					// Delete cert
 					cy.task('backendApiDelete', {

@@ -95,37 +95,37 @@ const internalProxyHost = {
 					expand: ["certificate", "owner", "access_list.[clients,items]"],
 				});
 			})
-			.then((row) => {
-				// Configure nginx
-				return internalNginx.configure(proxyHostModel, "proxy_host", row).then(() => {
+		.then(async (row) => {
+			// Configure nginx
+			return internalNginx.configure(proxyHostModel, "proxy_host", row).then(() => {
+				return row;
+			});
+		})
+		.then((row) => {
+			// Audit log
+			thisData.meta = _.assign({}, thisData.meta || {}, row.meta);
+
+			// Add to audit log
+			return internalAuditLog
+				.add(access, {
+					action: "created",
+					object_type: "proxy-host",
+					object_id: row.id,
+					meta: thisData,
+				})
+				.then(() => {
 					return row;
 				});
-			})
-			.then(row => {
-				return internalNginxOpenappsec.generateConfig(access, row, data)
-					.then(() => {
-						return row;
-					})
-					.catch((err) => {
-						logger.error("Error generating openappsec config: " + err + (err && err.stack ? err.stack : ""));
-					});
-			})
-			.then((row) => {
-				// Audit log
-				thisData.meta = _.assign({}, thisData.meta || {}, row.meta);
-
-				// Add to audit log
-				return internalAuditLog
-					.add(access, {
-						action: "created",
-						object_type: "proxy-host",
-						object_id: row.id,
-						meta: thisData,
-					})
-					.then(() => {
-						return row;
-					});
-			});
+		})
+		.then((row) => {
+			return internalNginxOpenappsec.generateConfig(access, row, data)
+				.then(() => {
+					return row;
+				})
+				.catch((err) => {
+					logger.error("Error generating openappsec config: " + err + (err && err.stack ? err.stack : ""));
+				});
+		});
 	},
 
 	/**
@@ -136,9 +136,9 @@ const internalProxyHost = {
 	 */
 	update: (access, data) => {
 		let thisData = data;
-		const create_certificate = thisData.certificate_id === "new";
+		const createCertificate = thisData.certificate_id === "new";
 
-		if (create_certificate) {
+		if (createCertificate) {
 			delete thisData.certificate_id;
 		}
 
@@ -176,7 +176,7 @@ const internalProxyHost = {
 					);
 				}
 
-				if (create_certificate) {
+				if (createCertificate) {
 					return internalCertificate
 						.createQuickCertificate(access, {
 							domain_names: thisData.domain_names || row.domain_names,
@@ -239,24 +239,24 @@ const internalProxyHost = {
 							});
 					});
 			})
-			.then(() => {
-				return internalProxyHost
-					.get(access, {
-						id: thisData.id,
-						expand: ["owner", "certificate", "access_list.[clients,items]"],
-					})
-					.then((row) => {
-						if (!row.enabled) {
-							// No need to add nginx config if host is disabled
-							return row;
-						}
-						// Configure nginx
-						return internalNginx.configure(proxyHostModel, "proxy_host", row).then((new_meta) => {
-							row.meta = new_meta;
-							return _.omit(internalHost.cleanRowCertificateMeta(row), omissions());
-						});
+		.then(() => {
+			return internalProxyHost
+				.get(access, {
+					id: thisData.id,
+					expand: ["owner", "certificate", "access_list.[clients,items]"],
+				})
+				.then(async (row) => {
+					if (!row.enabled) {
+						// No need to add nginx config if host is disabled
+						return row;
+					}
+					// Configure nginx
+					return internalNginx.configure(proxyHostModel, "proxy_host", row).then((new_meta) => {
+						row.meta = new_meta;
+						return _.omit(internalHost.cleanRowCertificateMeta(row), omissions());
 					});
-			});
+				});
+		});
 	},
 
 	/**
@@ -269,7 +269,6 @@ const internalProxyHost = {
 	 */
 	get: (access, data) => {
 		const thisData = data || {};
-
 		return access
 			.can("proxy_hosts:get", thisData.id)
 			.then((access_data) => {
@@ -277,7 +276,7 @@ const internalProxyHost = {
 					.query()
 					.where("is_deleted", 0)
 					.andWhere("id", thisData.id)
-					.allowGraph("[owner,access_list.[clients,items],certificate]")
+					.allowGraph(proxyHostModel.defaultAllowGraph)
 					.first();
 
 				if (access_data.permission_visibility !== "all") {
@@ -291,7 +290,7 @@ const internalProxyHost = {
 				return query.then(utils.omitRow(omissions()));
 			})
 			.then((row) => {
-				if (!row || !row.id) {
+				if (!row?.id) {
 					throw new errs.ItemNotFoundError(thisData.id);
 				}
 				const thisRow = internalHost.cleanRowCertificateMeta(row);
@@ -329,7 +328,7 @@ const internalProxyHost = {
 				return internalProxyHost.get(access, { id: data.id });
 			})
 			.then((row) => {
-				if (!row || !row.id) {
+				if (!row?.id) {
 					throw new errs.ItemNotFoundError(data.id);
 				}
 
@@ -380,42 +379,39 @@ const internalProxyHost = {
 			.then(() => {
 				return internalProxyHost.get(access, {
 					id: data.id,
-					expand: ["certificate", "owner", "access_list"],
+					expand: ["certificate", "owner", "access_list.[clients,items]"],
 				});
 			})
-			.then((row) => {
-				if (!row || !row.id) {
-					throw new errs.ItemNotFoundError(data.id);
-				}
-				if (row.enabled) {
-					throw new errs.ValidationError("Host is already enabled");
-				}
+		.then(async (row) => {
+			if (!row?.id) {
+				throw new errs.ItemNotFoundError(data.id);
+			}
+			if (row.enabled) {
+				throw new errs.ValidationError("Host is already enabled");
+			}
 
-				row.enabled = 1;
+			row.enabled = 1;
 
-				return proxyHostModel
-					.query()
-					.where("id", row.id)
-					.patch({
-						enabled: 1,
-					})
-					.then(() => {
-						// Configure nginx
-						return internalNginx.configure(proxyHostModel, "proxy_host", row);
-					})
-					.then(() => {
-						// Add to audit log
-						return internalAuditLog.add(access, {
-							action: "enabled",
-							object_type: "proxy-host",
-							object_id: row.id,
-							meta: _.omit(row, omissions()),
-						});
-					});
-			})
-			.then(() => {
-				return true;
+			await proxyHostModel
+				.query()
+				.where("id", row.id)
+				.patch({
+					enabled: 1,
+				});
+
+			// Configure nginx
+			await internalNginx.configure(proxyHostModel, "proxy_host", row);
+
+			// Add to audit log
+			await internalAuditLog.add(access, {
+				action: "enabled",
+				object_type: "proxy-host",
+				object_id: row.id,
+				meta: _.omit(row, omissions()),
 			});
+
+			return true;
+		});
 	},
 
 	/**
@@ -432,7 +428,7 @@ const internalProxyHost = {
 				return internalProxyHost.get(access, { id: data.id });
 			})
 			.then((row) => {
-				if (!row || !row.id) {
+				if (!row?.id) {
 					throw new errs.ItemNotFoundError(data.id);
 				}
 				if (!row.enabled) {
@@ -478,11 +474,12 @@ const internalProxyHost = {
 	 */
 	getAll: async (access, expand, searchQuery) => {
 		const accessData = await access.can("proxy_hosts:list");
+
 		const query = proxyHostModel
 			.query()
 			.where("is_deleted", 0)
 			.groupBy("id")
-			.allowGraph("[owner,access_list,certificate]")
+			.allowGraph(proxyHostModel.defaultAllowGraph)
 			.orderBy(castJsonIfNeed("domain_names"), "ASC");
 
 		if (accessData.permission_visibility !== "all") {
