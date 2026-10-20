@@ -47,7 +47,9 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          # @testing-library/jest-dom@7 (a develop-merge dep) requires Node >=22.
+          # Node 22 is the current LTS.
+          node-version: "22"
           cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
