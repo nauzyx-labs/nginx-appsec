@@ -3,7 +3,17 @@
 
 # This file assumes that the frontend has been built using ./scripts/frontend-build
 
-ARG BASE_IMAGE=nginxproxymanager/nginx-full:certbot-node
+# BASE_IMAGE is pinned by digest to OpenResty 1.27.1.2 (nginx 1.27.1).
+# The open-appsec attachment .so files in docker/lib/ are compiled for nginx
+# 1.27.1 (module version code 1027001) and nginx refuses to load a dynamic
+# module built for a different version. The floating `:certbot-node` tag was
+# rebuilt 2026-10-19 to OpenResty 1.31.1.1 (nginx 1.31.1), which is
+# incompatible — nginx fails to start with:
+#   module "/usr/lib/nginx/modules/libngx_module.so" version 1027001 instead of 1031001
+# open-appsec has not released a 1.31.x attachment, so we must stay on 1.27.x.
+# When a 1.31.x-compatible attachment ships, unpin and return to
+# `nginxproxymanager/nginx-full:certbot-node`.
+ARG BASE_IMAGE=nginxproxymanager/nginx-full@sha256:5882134e1fd8cb00ec78d111e96796fc1bd759d383094488e547ff53054ad0a2
 FROM nginxproxymanager/testca AS testca
 FROM $BASE_IMAGE
 
