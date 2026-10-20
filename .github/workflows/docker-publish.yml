@@ -45,7 +45,7 @@ jobs:
           echo "Resolved version: $VERSION"
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           # @testing-library/jest-dom@7 (a develop-merge dep) requires Node >=22.
           # Node 22 is the current LTS.
