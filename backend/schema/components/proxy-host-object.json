@@ -127,13 +127,16 @@
 					},
 					"use_openappsec": {
 						"type": "boolean"
-					},	
-			                "minimum_confidence": {
-			                        "type": "string"
-			                },
-			                "openappsec_mode": {
-			                        "type": "string"
-			                }
+					},
+					"minimum_confidence": {
+						"type": "string"
+					},
+					"openappsec_mode": {
+						"type": "string"
+					},
+					"access_list_id": {
+						"$ref": "../common.json#/properties/access_list_id"
+					}
 				}
 			},
 			"example": [
@@ -141,7 +144,8 @@
 					"path": "/app",
 					"forward_scheme": "http",
 					"forward_host": "example.com",
-					"forward_port": 80
+					"forward_port": 80,
+					"access_list_id": 0
 				}
 			]
 		},

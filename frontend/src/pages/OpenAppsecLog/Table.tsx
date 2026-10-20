@@ -1,6 +1,7 @@
-import { getCoreRowModel, useReactTable } from "@tanstack/react-table";
+import { useTable } from "@tanstack/react-table";
 import { useMemo } from "react";
 import type { OpenAppsecLogEntry } from "src/api/backend";
+import { features } from "src/components/Table/features";
 import { TableLayout } from "src/components/Table/TableLayout";
 import { buildColumns, type ColumnVariant } from "./columns";
 
@@ -17,12 +18,13 @@ export default function Table({ data, isFetching, variant, onSelectRow }: Props)
 		[variant, onSelectRow],
 	);
 
-	const tableInstance = useReactTable<OpenAppsecLogEntry>({
+	const tableInstance = useTable({
+		features,
 		columns,
 		data,
-		getCoreRowModel: getCoreRowModel(),
-		rowCount: data.length,
-		meta: { isFetching },
+		meta: {
+			isFetching,
+		},
 		enableSortingRemoval: false,
 	});
 

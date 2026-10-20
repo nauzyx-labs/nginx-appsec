@@ -3,8 +3,9 @@
 
 # This file assumes that the frontend has been built using ./scripts/frontend-build
 
+ARG BASE_IMAGE=nginxproxymanager/nginx-full:certbot-node
 FROM nginxproxymanager/testca AS testca
-FROM nginxproxymanager/nginx-full:certbot-node
+FROM $BASE_IMAGE
 
 ARG TARGETPLATFORM
 ARG BUILD_VERSION
@@ -38,6 +39,12 @@ EXPOSE 80 81 443
 
 COPY backend       /app
 COPY frontend/dist /app/frontend
+COPY docker/rootfs /
+
+# Copy test CA cert for use in container and add to trusted certs from a self-signed CA
+COPY --from=testca /home/step/certs/root_ca.crt /etc/ssl/certs/NginxProxyManager.crt
+WORKDIR /etc/ssl/certs
+RUN ln -s NginxProxyManager.crt 1d0e3f10.0 && update-ca-certificates
 
 WORKDIR /app
 RUN yarn install \
@@ -57,6 +64,7 @@ COPY --from=testca /home/step/certs/root_ca.crt /etc/ssl/certs/NginxProxyManager
 
 # patch nginx.conf for open-appsec attachment
 RUN sed -i -e '/include \/etc\/nginx\/modules\/\*\.conf/a\load_module /usr/lib/nginx/modules/libngx_module.so;' -e '/http {/a\\tcp_worker_processes           auto;' /etc/nginx/nginx.conf
+
 
 # Remove frontend service not required for prod, dev nginx config as well
 RUN rm -rf /etc/s6-overlay/s6-rc.d/user/contents.d/frontend /etc/nginx/conf.d/dev.conf \
