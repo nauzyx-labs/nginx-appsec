@@ -1,0 +1,150 @@
+name: Build and publish Docker image to GHCR
+
+# Builds the open-appsec NPM image (frontend + backend) and publishes it to
+# the GitHub Container Registry (ghcr.io).
+#
+# Trigger: push to main (both `latest` and the version tag from .version are
+# published together).
+#
+# The Dockerfile assumes the frontend has already been built into
+# frontend/dist (see scripts/ci/frontend-build), so the workflow builds the
+# frontend first, then builds the multi-arch image with that dist in the
+# context.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # allows a manual run from any branch, tagged with that branch
+
+env:
+  REGISTRY: ghcr.io
+  # Image is published under the repo's owner lowercase. For
+  # nauzyx-labs/nginx-appsec this resolves to ghcr.io/nauzyx-labs/nginx-appsec.
+  IMAGE_NAME: ${{ github.repository }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          # .version holds the semver, e.g. "2.16.0-appsec.1".
+          VERSION="$(awk '{$1=$1};1' .version)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::.version is empty"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "yarn"
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Install yarn
+        run: npm install -g yarn
+
+      # --- Frontend build (mirrors scripts/ci/frontend-build) ---
+      # Produces frontend/dist, which the Dockerfile COPYs into the image.
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: yarn install --frozen-lockfile
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: yarn lint
+
+      - name: Compile locales
+        working-directory: frontend
+        run: yarn locale-compile
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: yarn vitest run --no-color
+
+      - name: Build frontend
+        working-directory: frontend
+        run: yarn build
+
+      # --- Docker build & push (multi-arch) ---
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase image name
+        id: image
+        run: echo "name=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Generate build metadata
+        id: meta
+        run: |
+          BUILD_DATE="$(date -u '+%Y-%m-%d %T %Z')"
+          BUILD_COMMIT="${{ github.sha }}"
+          BUILD_VERSION="${{ steps.version.outputs.version }}"
+          echo "build_date=$BUILD_DATE" >> "$GITHUB_OUTPUT"
+          echo "build_commit=$BUILD_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "build_version=$BUILD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Build: version=$BUILD_VERSION commit=$BUILD_COMMIT date=$BUILD_DATE"
+
+      # Tags: always the version (e.g. 2.16.0-appsec.1) plus `latest` on main.
+      # A manual dispatch from another branch is tagged with that branch name
+      # instead of `latest`, so `latest` only ever tracks main.
+      - name: Determine tags
+        id: tags
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ steps.image.outputs.name }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          TAGS="$IMAGE:$VERSION"
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            TAGS="$TAGS,$IMAGE:latest"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAGS="$TAGS,$IMAGE:${{ github.ref_name }}"
+          fi
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+          echo "Publishing tags: $TAGS"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            BUILD_VERSION=${{ steps.meta.outputs.build_version }}
+            BUILD_COMMIT=${{ steps.meta.outputs.build_commit }}
+            BUILD_DATE=${{ steps.meta.outputs.build_date }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      - name: Summary
+        run: |
+          echo "### Docker image published :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Version:** \`${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Commit:** \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Platforms:** linux/amd64, linux/arm64" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Tags:**" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.tags.outputs.tags }}" | tr ',' '\n' | sed 's/^/  - `/' | sed 's/$/`/' >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Registry:** ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}" >> "$GITHUB_STEP_SUMMARY"
